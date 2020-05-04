@@ -1,5 +1,5 @@
 import json
-from secrets import spotify_user_id, spotify_token
+from secrets import spotify_user_id, spotify_token, channelID
 import requests
 import os
 import googleapiclient.discovery
@@ -7,10 +7,17 @@ import google_auth_oauthlib.flow
 import googleapiclient.errors
 import youtube_dl
 
+scopes = ["https://www.googleapis.com/auth/youtube",
+          "https://www.googleapis.com/auth/youtube.force-ssl",
+          "https://www.googleapis.com/auth/youtube.readonly",
+          "https://www.googleapis.com/auth/youtubepartner"]
+
+
 class CreatePlaylist:
     def __init__(self):
         self.user_id = spotify_user_id
         self.youtube_client = self.get_youtube_client()
+        #self.youtube_playlist = self.get_playlist_from_user()
         self.all_song_info = {}
 
     #Log into Youtube
@@ -26,7 +33,11 @@ class CreatePlaylist:
         client_secrets_file = 'client_secret.json'
 
         #Get credentials and create an API client
-        scopes = ["https://www.googleapis.com/auth/youtube.readonly"]
+        scopes = ["https://www.googleapis.com/auth/youtube",
+                  "https://www.googleapis.com/auth/youtube.force-ssl",
+                  "https://www.googleapis.com/auth/youtube.readonly",
+                  "https://www.googleapis.com/auth/youtubepartner"]
+
         flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(
             client_secrets_file, scopes)
         credentials = flow.run_console()
@@ -37,32 +48,83 @@ class CreatePlaylist:
 
         return youtube_client
 
-    #Grab our liked videos
-    def get_liked_videos(self):
-        request = self.youtube_client.videos().list(
-            part='snippet,contentDetails,statistics',
-            myRating='like'
-        )
 
+
+    def ask_user_which_playlist(self, info):
+        os.system('clear')
+        print("------------------ Playlists ------------------")
+        print(' - Which playlist do you wanna create a copy in Spotify?')
+        for i in range(0, len(info)):
+            print('%d - %s' % (i, info[i]['name']))
+        print("-----------------------------------------------")
+        print()
+        opc = int(input('Choose one: '))
+
+        return opc
+
+
+    def get_playlist_from_user(self):
+        request = self.youtube_client.playlists().list(
+            part="snippet",
+            channelId=channelID
+        )
         response = request.execute()
 
-        #collect each video and its information
-        for item in response['items']:
-            video_title = item['snippet']['title']
-            youtube_url = 'https://www.youtube.com/watch?v={}'.format(item["id"])
+        totalPlaylists = response["pageInfo"]["totalResults"]
+        playlists_infos = {}
 
-            #use youtube_dl to collect the song's info
+        for i in range(0, totalPlaylists):
+            playlist_name = response["items"][i]["snippet"]["title"]
+            playlist_id = response["items"][i]["id"]
+
+            playlists_infos[i] = {
+                'name': playlist_name,
+                'id': playlist_id,
+            }
+
+        opt = self.ask_user_which_playlist(playlists_infos)
+        return playlists_infos[opt]['id']
+
+
+
+
+    #Grab our liked videos
+    def get_videos(self):
+
+        playlist_id = self.get_playlist_from_user()
+
+        request = self.youtube_client.playlistItems().list(
+            part="snippet",
+            playlistId=playlist_id
+        )
+        response = request.execute()
+
+        totalVideos = response["pageInfo"]["totalResults"]
+
+        # collect each video and its information
+        for i in range(0, totalVideos):
+            video_title = response["items"][i]["snippet"]["title"]
+            youtube_url = 'https://www.youtube.com/watch?v={}'.format(response['items'][i]["snippet"]["resourceId"]["videoId"])
+
+            # use youtube_dl to collect the song's info
             video = youtube_dl.YoutubeDL({}).extract_info(youtube_url, download=False)
             song_name = video['track']
             artist = video['artist']
 
-            #save the info
-            self.all_song_info[video_title]={
+            print('-----------------------------------------------------------')
+            print('youtube_url : ', youtube_url)
+            print('song_name : ', song_name)
+            print('artist : ', artist)
+            print('-----------------------------------------------------------')
+
+            # save the info
+            self.all_song_info[video_title] = {
                 'youtube_url': youtube_url,
                 'song_name': song_name,
                 'artist': artist,
 
-                #add the uri, easy to get song to put into playlist
+
+                # add the uri, easy to get song to put into playlist
                 'spotify_uri': self.get_spotify_uri(song_name, artist)
             }
 
@@ -70,10 +132,10 @@ class CreatePlaylist:
     #Create a new playlist
     def create_playlist(self):
 
-        #Playlist's info
+        # Playlist's info
         request_body = json.dumps({
-            "name": "Youtube Videos",
-            "description": "All Liked Youtube Videos",
+            "name": "Musics from YT",
+            "description": "Musics that you like",
             "public": True
         })
 
@@ -124,7 +186,7 @@ class CreatePlaylist:
     #Add this song into spotify playlist
     def add_song_to_playlist(self):
         #Get the info of Youtube Liked Videos
-        self.get_liked_videos()
+        self.get_videos()
 
         print('Songs from youtube: ')
         print(self.all_song_info)
@@ -140,8 +202,8 @@ class CreatePlaylist:
         print()
 
         # Create a new playlist. (In this case i'm using an arealdy created playlist)
-        playlist_id = "0ecqeevxuNleRFGiEDpRBK"
-        #playlist_id = self.create_playlist()
+        #playlist_id = "0ecqeevxuNleRFGiEDpRBK"
+        playlist_id = self.create_playlist()
 
         # Add the songs in URIS into the playlist
         request_data = json.dumps(uris)
@@ -163,4 +225,5 @@ class CreatePlaylist:
 if __name__ == '__main__':
     cp = CreatePlaylist()
     cp.add_song_to_playlist()
-    print('Success')
+    os.system('clear')
+    print('---------Success-----------')
